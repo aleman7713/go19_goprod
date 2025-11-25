@@ -3,10 +3,12 @@ package main
 import (
 	"fmt"
 	"os"
-	// TODO: Добавьте необходимые импорты:
-	// "time"
-	// "github.com/golang-jwt/jwt/v5"
-	// "golang.org/x/crypto/bcrypt"
+	"time"
+	"errors"
+	"regexp"
+	"github.com/google/uuid"
+	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var jwtSecret []byte
@@ -31,7 +33,12 @@ func HashPassword(password string) (string, error) {
 	//
 	// Документация: https://pkg.go.dev/golang.org/x/crypto/bcrypt#GenerateFromPassword
 
-	return "", fmt.Errorf("not implemented - реализуйте хеширование пароля с bcrypt")
+    bytes, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+
+    return string(bytes), err
 }
 
 // CheckPassword проверяет пароль против хеша
@@ -45,7 +52,8 @@ func CheckPassword(password, hash string) bool {
 	//
 	// Документация: https://pkg.go.dev/golang.org/x/crypto/bcrypt#CompareHashAndPassword
 
-	return false // Временная заглушка
+	err := bcrypt.CompareHashAndPassword([]byte(password), []byte(hash))
+	return  (err == nil)
 }
 
 // GenerateToken создает JWT токен для пользователя
@@ -63,7 +71,28 @@ func GenerateToken(user User) (string, error) {
 	//
 	// Документация: https://pkg.go.dev/github.com/golang-jwt/jwt/v5
 
-	return "", fmt.Errorf("not implemented - реализуйте генерацию JWT токена")
+	claims := Claims{
+		UserID: user.ID,
+		Email: user.Email,
+		Username: user.Username,
+	}
+
+	claims.RegisteredClaims = jwt.RegisteredClaims{
+		ID: uuid.New().String(),
+		Subject: string(user.ID),
+		IssuedAt: jwt.NewNumericDate(time.Now()),
+		NotBefore: jwt.NewNumericDate(time.Now()),
+		ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	tokenString, err := token.SignedString(jwtSecret)
+
+	if err != nil {
+		return "", fmt.Errorf("failed to sign token: %w", err)
+	}
+
+	return tokenString, nil
 }
 
 // ValidateToken проверяет и парсит JWT токен
@@ -79,8 +108,35 @@ func ValidateToken(tokenString string) (*Claims, error) {
 	// 6. Верните claims и ошибку
 	//
 	// Подсказка: keyFunc - это функция func(token *jwt.Token) (interface{}, error)
+	
+	if tokenString == "" {
+		return nil, fmt.Errorf("token is empty")
+	}
 
-	return nil, fmt.Errorf("not implemented - реализуйте валидацию JWT токена")
+	claims := &Claims{}
+
+	// Парсим токен с проверкой подписи
+	token, err := jwt.ParseWithClaims(tokenString, &Claims{},
+	func(token *jwt.Token) (interface{}, error) {
+
+		// проверяем алгоритм
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+
+		return jwtSecret, nil
+	})
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse token: %w", err)
+	}
+
+	claims, ok := token.Claims.(*Claims)
+	if !ok || !token.Valid {
+		return nil, fmt.Errorf("invalid token claims")
+	}
+
+	return claims, nil
 }
 
 // ValidatePassword проверяет требования к паролю
@@ -95,6 +151,27 @@ func ValidatePassword(password string) error {
 	// - проверка наличия заглавных букв
 	// - проверка наличие специальных символов
 
+	var is_ok bool
+
+	// Проверка наличия цифр
+	is_ok, _ = regexp.MatchString(`\d`, password)
+	if !is_ok {
+		return errors.New("password не содержит цифр")
+	}
+
+	// Проверка наличия заглавных букв
+	is_ok, _ = regexp.MatchString(`[A-Z]`, password)
+	if !is_ok {
+		return errors.New("password не содержит заглавных букв")
+	}
+
+	// Проверка наличия специальных символов
+	pattern := `[!@#$%^&*()_+={}\[\]:;"'<>,.?/\\|~-]`
+	is_ok, _ = regexp.MatchString(pattern, password)
+	if !is_ok {
+		return errors.New("password не содержит специальных символов")
+	}
+
 	return nil
 }
 
@@ -106,6 +183,12 @@ func ValidateEmail(email string) error {
 
 	// TODO: Добавьте более строгую валидацию email если необходимо
 	// Можно использовать regexp.MatchString() для проверки формата
+	pattern := `^\w+@\w+\.\w+$`
+
+	is_ok, _ := regexp.MatchString(pattern, email)
+	if !is_ok {
+		return errors.New("email некорректно заполнен")
+	}
 
 	return nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
 )
 
 // RegisterHandler обрабатывает регистрацию нового пользователя
@@ -32,7 +33,55 @@ func RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	// - 400 для невалидных данных, 409 для дубликатов, 500 для внутренних ошибок
 	// - Не забудьте установить Content-Type: application/json для ответа
 
-	http.Error(w, "Registration not implemented", http.StatusNotImplemented)
+	var reg RegisterRequest
+	if err := json.NewDecoder(r.Body).Decode(&reg); err != nil {
+		http.Error(w, "Неверный формат данных: " + err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Валидация данных
+	if err := validateRegisterRequest(&reg); err != nil {
+		http.Error(w, "Валидация данных не пройдена: " + err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Проверьте, что пользователь с таким email не существует
+	if _, err := GetUserByEmail(reg.Email); err == nil {
+		http.Error(w, "Пользователь с таким email уже существует: " + reg.Email, http.StatusConflict)
+		return
+	}
+
+	// Захешируйте пароль с помощью функции HashPassword()
+	var err error
+	var pwdHash string
+	pwdHash, err = HashPassword(reg.Password)
+	if err != nil {
+		http.Error(w, "Неудалось захешировать пароль", http.StatusInternalServerError)
+		return
+	}
+
+	// Создайте пользователя в БД с помощью CreateUser()
+	var user *User
+	if user, err = CreateUser(reg.Email, reg.Username, pwdHash); err != nil {
+		http.Error(w, "Неудалось создать пользователя", http.StatusInternalServerError)
+		return
+	}
+
+	// Сгенерируйте JWT токен с помощью GenerateToken()
+	var token string
+	if token, err = GenerateToken(*user); err != nil {
+		http.Error(w, "Неудалось создать токен", http.StatusInternalServerError)
+		return
+	}
+
+	// Верните ответ с токеном и данными пользователя
+	result := AuthResponse{
+		Token: token,
+		User: *user,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
 }
 
 // LoginHandler обрабатывает вход пользователя
@@ -58,7 +107,46 @@ func LoginHandler(w http.ResponseWriter, r *http.Request) {
 	// - Используйте HTTP статус 401 для неверных учетных данных
 	// - Не возвращайте password_hash в ответе
 
-	http.Error(w, "Login not implemented", http.StatusNotImplemented)
+	var login LoginRequest
+	if err := json.NewDecoder(r.Body).Decode(&login); err != nil {
+		http.Error(w, "Неверный формат данных", http.StatusBadRequest)
+		return
+	}
+
+	if err := validateLoginRequest(&login); err != nil {
+		http.Error(w, "Invalid email or password", http.StatusBadRequest)
+		return
+	}
+
+	// Найдите пользователя по email с помощью GetUserByEmail()
+	var user *User
+	var err error
+	if user, err = GetUserByEmail(login.Email); err != nil {
+		http.Error(w, "Invalid email or password", http.StatusBadRequest)
+		return
+	}
+
+	// Проверьте пароль с помощью CheckPassword()
+	if !CheckPassword(login.Password, user.PasswordHash) {
+		http.Error(w, "Invalid email or password", http.StatusBadRequest)
+		return
+	}
+
+	// Сгенерируйте JWT токен с помощью GenerateToken()
+	var token string
+	if token, err = GenerateToken(*user); err != nil {
+		http.Error(w, "Неудалось создать токен", http.StatusInternalServerError)
+		return
+	}
+
+	// Верните ответ с токеном и данными пользователя
+	result := AuthResponse{
+		Token: token,
+		User: *user,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(result)
 }
 
 // ProfileHandler возвращает профиль текущего пользователя
@@ -81,7 +169,21 @@ func ProfileHandler(w http.ResponseWriter, r *http.Request) {
 	// - Если пользователь не найден - верните 404
 	// - Не включайте password_hash в ответ
 
-	http.Error(w, "Profile not implemented", http.StatusNotImplemented)
+	user_id, is_ok := GetUserIDFromContext(r)
+	if !is_ok {
+		http.Error(w, "Неверный формат данных", http.StatusBadRequest)
+		return
+	}
+
+	user, err := GetUserByID(user_id)
+	if err != nil {
+		http.Error(w, "Пользователя с таким ID не существует: " + string(user_id), http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(*user)
 }
 
 // HealthHandler проверяет состояние сервиса
@@ -150,6 +252,21 @@ func validateRegisterRequest(req *RegisterRequest) error {
 	// - Используйте ValidateEmail() и ValidatePassword() из auth.go
 	// - Проверьте длину username (например, минимум 3 символа)
 	// - Проверьте что username содержит только допустимые символы
+
+	if err := ValidateEmail(req.Email); err != nil {
+		return fmt.Errorf("email is incorrect: " + err.Error())
+	}
+	if err := ValidatePassword(req.Password); err != nil {
+		return fmt.Errorf("password is incorrect: " + err.Error())
+	}
+	if len(req.Username) < 3 {
+		return fmt.Errorf("username must be at least 3 characters long")
+	}
+	// Проверяем, не содержатся ли запрещенные символы
+	match, _ := regexp.MatchString(`^[a-z0-9._-]+$`, req.Username)
+	if !match {
+		return fmt.Errorf("username содержит запрещённые символы")
+	}
 
 	return nil
 }

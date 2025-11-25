@@ -2,9 +2,8 @@ package main
 
 import (
 	"net/http"
-	// TODO: Добавьте необходимые импорты:
-	// "context"
-	// "strings"
+	"context"
+	"strings"
 )
 
 // AuthMiddleware проверяет JWT токен и устанавливает контекст пользователя
@@ -30,8 +29,30 @@ func AuthMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		// - context.WithValue(r.Context(), "userID", claims.UserID)
 		// - next.ServeHTTP(w, r.WithContext(ctx))
 
-		// Временная заглушка - УДАЛИТЕ после реализации!
-		http.Error(w, "Middleware not implemented", http.StatusNotImplemented)
+
+		// Извлекаем токен из заголовка Authorization
+		authHeader := r.Header.Get("Authorization")
+
+		if authHeader == "" {
+			http.Error(w, "Authorization header missing", http.StatusUnauthorized)
+			return
+		}
+
+		if !strings.HasPrefix(authHeader, "Bearer ") {
+			http.Error(w, "Authorization header missing", http.StatusUnauthorized)
+			return
+		}
+
+		token := strings.TrimPrefix(authHeader, "Bearer ")
+		claims, err := ValidateToken(token)
+		if err != nil {
+			http.Error(w, "Invalid token", http.StatusUnauthorized)
+			return
+		}
+
+		// Добавляем информацию о пользователе в контекст
+		ctx := context.WithValue(r.Context(), "userID", claims.UserID)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	}
 }
 
@@ -46,5 +67,6 @@ func GetUserIDFromContext(r *http.Request) (int, bool) {
 	//
 	// Пример: userID, ok := r.Context().Value("userID").(int)
 
-	return 0, false
+	userID, ok := r.Context().Value("userID").(int)
+	return userID, ok
 }
