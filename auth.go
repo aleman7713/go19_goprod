@@ -52,7 +52,7 @@ func CheckPassword(password, hash string) bool {
 	//
 	// Документация: https://pkg.go.dev/golang.org/x/crypto/bcrypt#CompareHashAndPassword
 
-	err := bcrypt.CompareHashAndPassword([]byte(password), []byte(hash))
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
 	return  (err == nil)
 }
 
